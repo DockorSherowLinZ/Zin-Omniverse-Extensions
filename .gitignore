@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Omniverse / Kit caches (common)
+**/cache/
+**/.cache/
+**/kit/cache/
+**/kit/logs/
+**/logs/
+**/omni.kit.app*/cache/
+**/ov/cache/
+**/ov/logs/
+
+# Build artifacts
+dist/
+build/
