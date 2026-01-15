@@ -13,4 +13,4 @@ category = "ZinTools"
 "omni.usd" = {}
 
 [[python.module]]
-name = "tw.zin.smart_align"
+name = "smart_align"
