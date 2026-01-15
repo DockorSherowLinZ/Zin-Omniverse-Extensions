@@ -3,7 +3,7 @@ import omni.ui as ui
 import omni.usd
 from pxr import UsdGeom, Usd, Gf
 
-class AlignExtension(omni.ext.IExt):
+class SmartAlignExtension(omni.ext.IExt):
     def on_startup(self, ext_id):
         self._usd_context = omni.usd.get_context()
         self._selection = self._usd_context.get_selection()

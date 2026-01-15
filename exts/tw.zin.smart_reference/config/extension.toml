@@ -1,7 +1,7 @@
 [package]
-title = "SmartAssetsBuilder"
+title = "SmartReference"
 version = "0.1.0"
-description = "SimReady asset builder (skeleton)."
+description = "Reference helpers (skeleton)."
 authors = ["Zin"]
 readme = "README.md"
 repository = "https://github.com/<YOUR_GITHUB>/<YOUR_REPO>"
@@ -13,4 +13,4 @@ category = "ZinTools"
 "omni.usd" = {}
 
 [[python.module]]
-name = "tw.zin.smart_assets_builder"
+name = "smart_reference"

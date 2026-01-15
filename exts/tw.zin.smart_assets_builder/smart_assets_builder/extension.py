@@ -1,4 +1,4 @@
-# SmartAssetsBuilder — extension.py (USD Composer / Create 2023.2.5)
+# SmartAssetsBuilder — SmartAssetsBuilderExtension.py (USD Composer / Create 2023.2.5)
 # Version: v1.8.4 (UI: Recurse moved to new line with description)
 
 import os
@@ -150,7 +150,7 @@ def _relref(from_file: str, to_file: str) -> str:
 
 
 def _dotify_rel(rel_path: str) -> str:
-    """Make 'name.usd' → './name.usd' for subLayers to match sample."""
+    """Make 'name.usd' > './name.usd' for subLayers to match sample."""
     if not rel_path:
         return rel_path
     if rel_path.startswith(("omniverse://", "omni://", "/", "../", "./")):
@@ -251,7 +251,7 @@ def _copy_materials_any_scheme(src_core_dir: str, out_core_dir: str, overwrite: 
     def _ensure_dir_any(d):
         (_ensure_dir_ov if _is_ov_url(d) else _ensure_dir_local)(d)
 
-    # Nucleus → Nucleus: per-file copy
+    # Nucleus > Nucleus: per-file copy
     if _is_ov_url(src_mat) and _is_ov_url(dst_mat):
         def walk(u_src: str, u_dst: str):
             rc, entries = omni.client.list(u_src.rstrip("/"))
@@ -275,7 +275,7 @@ def _copy_materials_any_scheme(src_core_dir: str, out_core_dir: str, overwrite: 
                         except Exception: pass
                     rc2 = omni.client.copy(c_src, c_dst)[0] if hasattr(omni.client, "copy") else omni.client.Result.ERROR
                     if rc2 != omni.client.Result.OK:
-                        log_fn(f"[ERROR] Copy failed: {c_src} → {c_dst} ({rc2})")
+                        log_fn(f"[ERROR] Copy failed: {c_src} > {c_dst} ({rc2})")
         walk(src_mat, dst_mat)
         return True
 
@@ -524,7 +524,7 @@ def _list_nucleus(url: str, pattern: str, recursive: bool) -> List[str]:
 
 # ================================== UI / Ext ==================================
 
-class Extension(omni.ext.IExt):
+class SmartAssetsBuilderExtension(omni.ext.IExt):
     def on_startup(self, ext_id):
         self._ext_id = ext_id
         self._found: List[str] = []
@@ -561,7 +561,7 @@ class Extension(omni.ext.IExt):
                     
                     # --- Header ---
                     ui.Label("SmartAssetsBuilder (v1.8.4)", style=self._STYLE_HEAD)
-                    ui.Label("Source → Scan → List → Output Root → Start", style={"color": 0xFF888888})
+                    ui.Label("Source > Scan > List > Output Root > Start", style={"color": 0xFF888888})
                     ui.Separator()
 
                     # --- Source Section ---
@@ -616,7 +616,7 @@ class Extension(omni.ext.IExt):
                         with ui.HStack(spacing=5, height=ui.Pixel(22)):
                             self._inplace_cb = ui.CheckBox(width=20)
                             self._inplace_cb.model.set_value(False)
-                            ui.Label("Allow Same Root (in-place) — skips Materials copy", style={"color": 0xFFDDDDDD})
+                            ui.Label("Allow Same Root (in-place) - skips Materials copy", style={"color": 0xFFDDDDDD})
 
                     ui.Separator()
 
@@ -782,9 +782,9 @@ class Extension(omni.ext.IExt):
                     if not _mat_ok:
                         self._warn("Materials not copied or not found. If max references './Materials/...', textures may miss.")
 
-                # Build trio: asset → main → id
+                # Build trio: asset > main > id
                 try:
-                    self._info(f"  [1/3] asset → {asset_path}")
+                    self._info(f"  [1/3] asset > {asset_path}")
                     # Pass the material path override here
                     a_path = _build_asset(asset_path, max_dst, mat_path_override)
                     self._info(f"      asset done: {a_path}")
@@ -795,7 +795,7 @@ class Extension(omni.ext.IExt):
                     continue
 
                 try:
-                    self._info(f"  [2/3] main  → {main_path}")
+                    self._info(f"  [2/3] main  > {main_path}")
                     m_path = _build_main(main_path, a_path, core)
                     self._info(f"      main done: {m_path}")
                 except Exception as e_main:
@@ -805,7 +805,7 @@ class Extension(omni.ext.IExt):
                     continue
 
                 try:
-                    self._info(f"  [3/3] id    → {id_path}")
+                    self._info(f"  [3/3] id    > {id_path}")
                     i_path = _build_id(id_path, m_path, core)
                     self._info(f"      id done: {i_path}")
                 except Exception as e_id:
@@ -815,7 +815,7 @@ class Extension(omni.ext.IExt):
 
                 done += 1
             except Exception as e:
-                self._error(f"Failed: {src} → {e}")
+                self._error(f"Failed: {src} > {e}")
                 traceback.print_exc()
             finally:
                 self._progress(i, n)

@@ -1,7 +1,7 @@
 [package]
-title = "SmartReference"
+title = "SmartMeasure"
 version = "0.1.0"
-description = "Reference helpers (skeleton)."
+description = "Measurement helpers (skeleton)."
 authors = ["Zin"]
 readme = "README.md"
 repository = "https://github.com/<YOUR_GITHUB>/<YOUR_REPO>"
@@ -13,4 +13,4 @@ category = "ZinTools"
 "omni.usd" = {}
 
 [[python.module]]
-name = "tw.zin.smart_reference"
+name = "smart_measure"
