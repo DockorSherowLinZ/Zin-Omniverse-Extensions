@@ -1,16 +1,19 @@
-# SmartAssetsBuilder — SmartAssetsBuilderExtension.py (USD Composer / Create 2023.2.5)
-# Version: v1.8.4 (UI: Recurse moved to new line with description)
+# SmartAssetsBuilder — extension.py (USD Composer / Create 2023.2.5)
+# Version: v1.10.5 (UI Cleaned: Removed Headers, Light Gray Lines, Compact, Async)
 
 import os
 import fnmatch
 import traceback
 import posixpath
 import shutil
+import asyncio
 from typing import List, Tuple
 
 import omni.ext
 import omni.ui as ui
-from pxr import Usd, UsdGeom, Sdf, Gf
+import omni.kit.ui 
+import omni.kit.app
+from pxr import Usd, UsdGeom, Sdf, Gf, Kind
 
 # Optional Nucleus support
 try:
@@ -150,7 +153,7 @@ def _relref(from_file: str, to_file: str) -> str:
 
 
 def _dotify_rel(rel_path: str) -> str:
-    """Make 'name.usd' > './name.usd' for subLayers to match sample."""
+    """Make 'name.usd' -> './name.usd' for subLayers to match sample."""
     if not rel_path:
         return rel_path
     if rel_path.startswith(("omniverse://", "omni://", "/", "../", "./")):
@@ -189,7 +192,7 @@ def _write_bytes(path_or_url: str, data: bytes) -> bool:
 
 
 def _copy_file_any_scheme(src: str, dst: str, overwrite: bool, log_fn) -> bool:
-    """Copy src→dst even across local/Nucleus. Returns True if present at dst (copied or already there)."""
+    """Copy src->dst even across local/Nucleus. Returns True if present at dst (copied or already there)."""
     if _is_same_path(src, dst):
         return True
 
@@ -251,7 +254,7 @@ def _copy_materials_any_scheme(src_core_dir: str, out_core_dir: str, overwrite: 
     def _ensure_dir_any(d):
         (_ensure_dir_ov if _is_ov_url(d) else _ensure_dir_local)(d)
 
-    # Nucleus > Nucleus: per-file copy
+    # Nucleus -> Nucleus: per-file copy
     if _is_ov_url(src_mat) and _is_ov_url(dst_mat):
         def walk(u_src: str, u_dst: str):
             rc, entries = omni.client.list(u_src.rstrip("/"))
@@ -275,11 +278,11 @@ def _copy_materials_any_scheme(src_core_dir: str, out_core_dir: str, overwrite: 
                         except Exception: pass
                     rc2 = omni.client.copy(c_src, c_dst)[0] if hasattr(omni.client, "copy") else omni.client.Result.ERROR
                     if rc2 != omni.client.Result.OK:
-                        log_fn(f"[ERROR] Copy failed: {c_src} > {c_dst} ({rc2})")
+                        log_fn(f"[ERROR] Copy failed: {c_src} → {c_dst} ({rc2})")
         walk(src_mat, dst_mat)
         return True
 
-    # General cases (local↔local / cross-scheme): iterate and read→write
+    # General cases (local<->local / cross-scheme): iterate and read->write
     def _iter_local_files(root_dir: str):
         for r, _dirs, files in os.walk(root_dir, topdown=True):
             yield r, files
@@ -423,7 +426,14 @@ def _derive_names(src_path: str, id_suffix: str) -> Tuple[str, str, str, str]:
     base = src_path.rsplit("/", 1)[-1] if _is_ov_url(src_path) else os.path.basename(src_path)
     name, _, _ = base.partition(".")
     core = name[4:] if name.lower().startswith("max_") else name
-    return core, f"asset_{core}.usd", f"{core}.usd", f"id_{core}_{id_suffix}.usd"
+    
+    # [Logic Change] Handle empty suffix
+    if id_suffix:
+        id_filename = f"id_{core}_{id_suffix}.usd"
+    else:
+        id_filename = f"id_{core}.usd"
+
+    return core, f"asset_{core}.usd", f"{core}.usd", id_filename
 
 
 def _build_asset(out_path: str, sublayer_target: str, mat_path_override: str = "") -> str:
@@ -432,13 +442,13 @@ def _build_asset(out_path: str, sublayer_target: str, mat_path_override: str = "
     stage.SetDefaultPrim(UsdGeom.Xform.Define(stage, "/World").GetPrim())
     stage.GetRootLayer().customLayerData = _make_custom_layer_data(*_ASSET_CAM)
     
-    # 1. 處理 max_{name}.usd (底層)
+    # 1. Process max_{name}.usd (Base layer)
     rel_max = _dotify_rel(_relref(out_path, sublayer_target))
     
-    # 準備 subLayer 列表
+    # Prepare subLayer list
     layers = [rel_max]
 
-    # 2. 如果有指定材質覆蓋路徑，將其加入到最上層 (Index 0)
+    # 2. If material override path is specified, add it to the top (Index 0)
     if mat_path_override:
         raw_mat_path = _relref(out_path, mat_path_override)
         if ":" in raw_mat_path or raw_mat_path.startswith(("/", "\\")):
@@ -446,10 +456,10 @@ def _build_asset(out_path: str, sublayer_target: str, mat_path_override: str = "
         else:
             rel_mat = _dotify_rel(raw_mat_path)
         
-        # 插入到列表第一個位置，確保覆蓋
+        # Insert at the first position to ensure override
         layers.insert(0, rel_mat)
 
-    # 3. 設定
+    # 3. Set subLayerPaths
     stage.GetRootLayer().subLayerPaths = layers
     
     _save(stage)
@@ -474,52 +484,17 @@ def _build_id(out_path: str, main_path: str, core: str) -> str:
     _set_stage_defaults(stage)
     stage.SetDefaultPrim(UsdGeom.Xform.Define(stage, "/World").GetPrim())
     stage.GetRootLayer().customLayerData = _make_custom_layer_data(*_ID_CAM)
+    
+    # Create Prim
     prim = stage.DefinePrim(f"/World/{core}")
+    
+    # [Logic] Set Kind = component
+    Usd.ModelAPI(prim).SetKind(Kind.Tokens.component)
+    
     prim.GetReferences().ClearReferences()
     prim.GetReferences().AddReference(_relref(out_path, main_path))
     _save(stage)
     return out_path
-
-
-# ================================== Listing ===================================
-
-def _list_local(folder: str, pattern: str, recursive: bool) -> List[str]:
-    if not os.path.isdir(folder):
-        return []
-    if not recursive:
-        return sorted([os.path.join(folder, f) for f in os.listdir(folder) if fnmatch.fnmatch(f.lower(), pattern.lower())])
-    out = []
-    for root, _dirs, files in os.walk(folder):
-        for f in files:
-            if fnmatch.fnmatch(f.lower(), pattern.lower()):
-                out.append(os.path.join(root, f))
-    return sorted(out)
-
-
-def _list_nucleus(url: str, pattern: str, recursive: bool) -> List[str]:
-    if omni is None:
-        return []
-    result: List[str] = []
-
-    def walk(u: str):
-        rc, entries = omni.client.list(u.rstrip("/"))
-        if int(rc) != int(omni.client.Result.OK):
-            return
-        for e in entries:
-            name = e.relative_path
-            if not name or name in (".", ".."):
-                continue
-            child = u.rstrip("/") + "/" + name
-            is_dir = bool(e.flags & int(omni.client.ItemFlags.CAN_HAVE_CHILDREN))
-            if is_dir:
-                if recursive:
-                    walk(child)
-            else:
-                if fnmatch.fnmatch(name.lower(), pattern.lower()):
-                    result.append(child)
-
-    walk(url)
-    return sorted(result)
 
 
 # ================================== UI / Ext ==================================
@@ -527,105 +502,209 @@ def _list_nucleus(url: str, pattern: str, recursive: bool) -> List[str]:
 class SmartAssetsBuilderExtension(omni.ext.IExt):
     def on_startup(self, ext_id):
         self._ext_id = ext_id
-        self._found: List[str] = []
-        self._scan_root: str = ""
-        self._progress_label = None
-        self._count_label = None
+        
+        # [Safe Init] Ensure these are initialized here for standalone mode
+        self._init_data()
 
         # Styles for log lines
         self._STYLE_HEAD  = {"font_size": 18, "color": 0xFFDDDDDD}
         self._STYLE_LABEL = {"color": 0xFFAAAAAA}   # Dimmed labels
 
-        self._build_ui()
+        # Default behavior: build the floating window
+        self._menu = None
+        self._window = None
+        
+        # Add Menu Item under "Window" -> "SmartAssetsBuilder"
+        try:
+            editor_menu = omni.kit.ui.get_editor_menu()
+            if editor_menu:
+                self._menu = editor_menu.add_item(
+                    "Window/SmartAssetsBuilder", 
+                    self._on_menu_click, 
+                    toggle=True, 
+                    value=False
+                )
+        except Exception:
+            pass
 
     def on_shutdown(self):
+        if self._menu:
+            try:
+                omni.kit.ui.get_editor_menu().remove_item(self._menu)
+                self._menu = None
+            except:
+                pass
+
         if getattr(self, "_window", None):
             self._window.destroy()
             self._window = None
 
-    # ---------- UI ----------
+    def _init_data(self):
+        """Helper to initialize data structures if they don't exist."""
+        if not hasattr(self, '_found'):
+            self._found: List[str] = []
+        if not hasattr(self, '_scan_root'):
+            self._scan_root: str = ""
+        if not hasattr(self, '_progress_bar'):
+            self._progress_bar = None
+        if not hasattr(self, '_progress_label'):
+            self._progress_label = None
+        if not hasattr(self, '_count_label'):
+            self._count_label = None
+
+    # ---------- Internal Listing Methods (Fix for NameError) ----------
+    def _list_local(self, folder: str, pattern: str, recursive: bool) -> List[str]:
+        if not os.path.isdir(folder):
+            return []
+        if not recursive:
+            return sorted([os.path.join(folder, f) for f in os.listdir(folder) if fnmatch.fnmatch(f.lower(), pattern.lower())])
+        out = []
+        for root, _dirs, files in os.walk(folder):
+            for f in files:
+                if fnmatch.fnmatch(f.lower(), pattern.lower()):
+                    out.append(os.path.join(root, f))
+        return sorted(out)
+
+    def _list_nucleus(self, url: str, pattern: str, recursive: bool) -> List[str]:
+        if omni is None:
+            return []
+        result: List[str] = []
+
+        def walk(u: str):
+            rc, entries = omni.client.list(u.rstrip("/"))
+            if int(rc) != int(omni.client.Result.OK):
+                return
+            for e in entries:
+                name = e.relative_path
+                if not name or name in (".", ".."):
+                    continue
+                child = u.rstrip("/") + "/" + name
+                is_dir = bool(e.flags & int(omni.client.ItemFlags.CAN_HAVE_CHILDREN))
+                if is_dir:
+                    if recursive:
+                        walk(child)
+                else:
+                    if fnmatch.fnmatch(name.lower(), pattern.lower()):
+                        result.append(child)
+
+        walk(url)
+        return sorted(result)
+
+    # ---------- UI Architecture ----------
+    
+    def _on_menu_click(self, menu, value):
+        """Toggle window visibility from Menu"""
+        if value:
+            self._build_ui()
+            self._window.visible = True
+        else:
+            if self._window:
+                self._window.visible = False
+
     def _build_ui(self):
-        # Window
-        self._window = ui.Window("SmartAssetsBuilder", width=680, height=620, dockPreference=ui.DockPreference.LEFT_BOTTOM)
+        """Creates the floating window. Used for standalone mode."""
+        if not getattr(self, "_window", None):
+            self._window = ui.Window("SmartAssetsBuilder", width=680, height=450, dockPreference=ui.DockPreference.LEFT_BOTTOM)
+            self._window.set_visibility_changed_fn(self._on_window_visibility_changed)
+            with self._window.frame:
+                self.build_ui_layout()
+    
+    def _on_window_visibility_changed(self, visible):
+        if self._menu:
+            omni.kit.ui.get_editor_menu().set_value(self._menu, visible)
+
+    def build_ui_layout(self):
+        """
+        [Public Method] Creates the actual UI content.
+        Zin All Tools calls this method to embed the UI.
+        """
+        self._init_data()
         
-        # Style to force compact height on fields
+        self._STYLE_HEAD  = {"font_size": 18, "color": 0xFFDDDDDD}
+        self._STYLE_LABEL = {"color": 0xFFAAAAAA}
         COMPACT_STYLE = {"font_size": 14, "padding": 2}
 
-        with self._window.frame:
-            with ui.ScrollingFrame(
-                horizontal_scrollbar_policy=ui.ScrollBarPolicy.SCROLLBAR_AS_NEEDED,
-                vertical_scrollbar_policy=ui.ScrollBarPolicy.SCROLLBAR_ALWAYS_ON,
-                style={"padding": 15}
-            ):
-                with ui.VStack(spacing=15, height=0):
+        # [Important] Use a VStack as root container with height=0 to auto-shrink
+        # [UI Polish] Increased padding to 20 for more breathing room
+        with ui.VStack(spacing=0, height=0, style={"padding": 20}):
+            
+            # --- Header Removed ---
+            # [Mod v1.10.5] No Title or flowchart text here
+
+            # --- Source Section ---
+            with ui.VStack(spacing=8):
+                ui.Label("Source Folder URL", style=self._STYLE_LABEL)
+                # [UI Polish] Height 26px
+                self._folder_field = ui.StringField(height=ui.Pixel(26), width=ui.Fraction(1), style=COMPACT_STYLE)
+
+                # Filter Row
+                with ui.HStack(spacing=15, height=ui.Pixel(26)):
+                    ui.Label("Filename filter", width=0, style=self._STYLE_LABEL)
+                    self._filter_field = ui.StringField(width=ui.Fraction(1), style=COMPACT_STYLE)
+                    self._filter_field.model.set_value("max_*.usd")
+                
+                # Recurse Row
+                with ui.HStack(height=ui.Pixel(26), spacing=5):
+                    self._recurse_cb = ui.CheckBox(width=20)
+                    self._recurse_cb.model.set_value(True) # Default Checked
+                    ui.Label("Recurse", width=0, style=self._STYLE_LABEL)
+                    ui.Label("(Search inside sub-folders)", style={"color": 0xFF666666, "font_size": 12})
+
+                # ID Suffix / Overwrite Row
+                with ui.HStack(spacing=10, height=ui.Pixel(26)):
+                    ui.Label("ID Suffix", width=0, style=self._STYLE_LABEL)
+                    self._id_field = ui.StringField(width=ui.Fraction(1), style=COMPACT_STYLE)
+                    self._id_field.model.set_value("") # Default Empty
                     
-                    # --- Header ---
-                    ui.Label("SmartAssetsBuilder (v1.8.4)", style=self._STYLE_HEAD)
-                    ui.Label("Source > Scan > List > Output Root > Start", style={"color": 0xFF888888})
-                    ui.Separator()
-
-                    # --- Source Section ---
-                    with ui.VStack(spacing=8):
-                        ui.Label("Source Folder URL", style=self._STYLE_LABEL)
-                        self._folder_field = ui.StringField(height=ui.Pixel(22), width=ui.Fraction(1), style=COMPACT_STYLE)
-
-                        # Filter Row
-                        with ui.HStack(spacing=15, height=ui.Pixel(22)):
-                            ui.Label("Filename filter", width=0, style=self._STYLE_LABEL)
-                            self._filter_field = ui.StringField(width=ui.Fraction(1), style=COMPACT_STYLE)
-                            self._filter_field.model.set_value("max_*.usd")
-                        
-                        # Recurse Row (New independent row)
-                        with ui.HStack(height=ui.Pixel(22), spacing=5):
-                            self._recurse_cb = ui.CheckBox(width=20)
-                            self._recurse_cb.model.set_value(True) # Default Checked
-                            ui.Label("Recurse", width=0, style=self._STYLE_LABEL)
-                            # Add description
-                            ui.Label("(Search inside sub-folders)", style={"color": 0xFF666666, "font_size": 12})
-
-                        # ID Suffix / Overwrite Row
-                        with ui.HStack(spacing=10, height=ui.Pixel(22)):
-                            ui.Label("ID Suffix", width=0, style=self._STYLE_LABEL)
-                            self._id_field = ui.StringField(width=ui.Fraction(1), style=COMPACT_STYLE)
-                            self._id_field.model.set_value("TEMP00000001")
-                            
-                            ui.Spacer(width=20)
-                            
-                            with ui.HStack(width=0, spacing=5):
-                                self._overwrite_cb = ui.CheckBox(width=20)
-                                self._overwrite_cb.model.set_value(False)
-                                ui.Label("Overwrite", style=self._STYLE_LABEL)
-
-                        # Scan Button
-                        ui.Button("Scan", clicked_fn=self._on_scan, height=30, style={"margin_top": 5})
-                        
-                        self._count_label = ui.Label("Ready to scan...", height=20, alignment=ui.Alignment.CENTER, style={"color": 0xFF888888, "margin_bottom": 5})
-
-                    ui.Separator(height=10)
-
-                    # --- Output Section ---
-                    with ui.VStack(spacing=8):
-                        ui.Label("Output Root URL (local or omniverse://)", style=self._STYLE_LABEL)
-                        self._out_root_field = ui.StringField(height=ui.Pixel(22), width=ui.Fraction(1), style=COMPACT_STYLE)
-                        
-                        ui.Label("Material Overlay Path (Optional)", style=self._STYLE_LABEL)
-                        self._mat_field = ui.StringField(height=ui.Pixel(22), width=ui.Fraction(1), style=COMPACT_STYLE)
-                        self._mat_field.model.set_value(r"C:\Users\iec141194\Desktop\Inventec\Library\Material\mat_Product_v2.usd")
-
-                        # In-place Row
-                        with ui.HStack(spacing=5, height=ui.Pixel(22)):
-                            self._inplace_cb = ui.CheckBox(width=20)
-                            self._inplace_cb.model.set_value(False)
-                            ui.Label("Allow Same Root (in-place) - skips Materials copy", style={"color": 0xFFDDDDDD})
-
-                    ui.Separator()
-
-                    # --- Footer Action ---
-                    with ui.HStack(spacing=15, height=30):
-                        ui.Button("Start (build trio)", clicked_fn=self._on_start, width=150, style={"background_color": 0xFF44AA44})
-                        self._progress_label = ui.Label("Progress: 0/0", alignment=ui.Alignment.LEFT_CENTER)
+                    ui.Spacer(width=20)
                     
-                    ui.Spacer(height=10)
+                    with ui.HStack(width=0, spacing=5):
+                        self._overwrite_cb = ui.CheckBox(width=20)
+                        self._overwrite_cb.model.set_value(False)
+                        ui.Label("Overwrite", style=self._STYLE_LABEL)
+
+                # Scan Button (Inline with Count Label)
+                with ui.HStack(height=30, style={"margin_top": 5}):
+                    ui.Button("Scan", clicked_fn=self._on_scan, width=ui.Fraction(1), height=30)
+                    ui.Spacer(width=10)
+                    self._count_label = ui.Label("Ready to scan...", width=ui.Fraction(1), alignment=ui.Alignment.CENTER, style={"color": 0xFF888888})
+
+            ui.Spacer(height=5)
+            # [Mod v1.10.5] Light gray line
+            ui.Line(height=1, style={"color": 0xFF555555})
+            ui.Spacer(height=5)
+
+            # --- Output Section ---
+            with ui.VStack(spacing=12):
+                ui.Label("Output Root URL (local or omniverse://)", style=self._STYLE_LABEL)
+                self._out_root_field = ui.StringField(height=ui.Pixel(26), width=ui.Fraction(1), style=COMPACT_STYLE)
+                
+                ui.Label("Material Overlay Path (Optional)", style=self._STYLE_LABEL)
+                self._mat_field = ui.StringField(height=ui.Pixel(26), width=ui.Fraction(1), style=COMPACT_STYLE)
+                self._mat_field.model.set_value(r"C:\Users\iec141194\Desktop\Inventec\Library\Material\mat_Product_v2.usd")
+
+                # In-place Row
+                with ui.HStack(spacing=5, height=ui.Pixel(26)):
+                    self._inplace_cb = ui.CheckBox(width=20)
+                    self._inplace_cb.model.set_value(False)
+                    ui.Label("Allow Same Root (in-place) - skips Materials copy", style={"color": 0xFFDDDDDD})
+
+            ui.Spacer(height=10)
+            # [Mod v1.10.5] Light gray line
+            ui.Line(height=1, style={"color": 0xFF555555})
+            ui.Spacer(height=10)
+
+            # --- Footer (Compactly Stacked) ---
+            with ui.HStack(height=30, spacing=15):
+                ui.Button("Start (build trio)", clicked_fn=self._on_start_clicked, width=150, height=30)
+                
+                # Real Progress Bar
+                with ui.ZStack(height=30): 
+                    self._progress_bar = ui.ProgressBar(width=ui.Fraction(1), height=30)
+                    self._progress_bar.model.set_value(0.0)
+                    
+                    # Overlay Text
+                    self._progress_label = ui.Label("0/0", alignment=ui.Alignment.CENTER, style={"color": 0xFFFFFFFF})
 
     # ---------- Logging (Console Only) ----------
     def _log_to_console(self, level: str, text: str):
@@ -648,8 +727,15 @@ class SmartAssetsBuilderExtension(omni.ext.IExt):
         self._log_to_console(lvl, txt)
 
     def _progress(self, i: int, n: int):
+        # Update text label
         if self._progress_label:
-            self._progress_label.text = f"Progress: {i}/{n}"
+            self._progress_label.text = f"{i}/{n}"
+        
+        # Update progress bar (0.0 to 1.0)
+        if self._progress_bar and n > 0:
+            self._progress_bar.model.set_value(float(i) / float(n))
+        elif self._progress_bar:
+            self._progress_bar.model.set_value(0.0)
 
     # ---------- UI actions ----------
     def _on_scan(self):
@@ -672,7 +758,8 @@ class SmartAssetsBuilderExtension(omni.ext.IExt):
             return
 
         try:
-            files = _list_nucleus(url, pattern, recurse) if _is_ov_url(url) else _list_local(url, pattern, recurse)
+            # [Fix] Use self._list_... methods
+            files = self._list_nucleus(url, pattern, recurse) if _is_ov_url(url) else self._list_local(url, pattern, recurse)
             self._found = files
             self._scan_root = url
             
@@ -695,7 +782,11 @@ class SmartAssetsBuilderExtension(omni.ext.IExt):
                 self._count_label.style = {"color": 0xFFFF5555}
             traceback.print_exc()
 
-    def _on_start(self):
+    def _on_start_clicked(self):
+        # Wrapper to fire the async task
+        asyncio.ensure_future(self._on_start_async())
+
+    async def _on_start_async(self):
         if not self._found:
             self._warn("Nothing to process: please scan first")
             if self._count_label: 
@@ -736,6 +827,7 @@ class SmartAssetsBuilderExtension(omni.ext.IExt):
                     self._error("Invalid Output Root: it must NOT be inside/contain the source <CORE> folder. "
                                 "If you want to build in-place, enable 'Allow Same Root (in-place)'. Skipped.")
                     self._progress(i, n)
+                    await omni.kit.app.get_app().next_update_async()
                     continue
 
                 inplace_mode = same_dir and inplace_ok
@@ -754,6 +846,7 @@ class SmartAssetsBuilderExtension(omni.ext.IExt):
                     self._info(f"Skipped (exists): {src}")
                     skipped += 1
                     self._progress(i, n)
+                    await omni.kit.app.get_app().next_update_async()
                     continue
 
                 self._info(f"Processing: {src}")
@@ -765,59 +858,62 @@ class SmartAssetsBuilderExtension(omni.ext.IExt):
                 # max_<CORE>.usd
                 if inplace_mode:
                     max_dst = src
-                    self._info("  max: in-place mode — no copy (using original)")
+                    self._info("  max: in-place mode - no copy (using original)")
                 else:
                     max_dst = _join(out_core_dir, os.path.basename(src))
                     copied = _copy_file_any_scheme(src, max_dst, overwrite, self._styled)
                     if not copied and not _exists(max_dst):
-                        self._error("Failed to place max_<CORE>.usd into output CORE folder. Abort this item.")
                         self._progress(i, n)
+                        await omni.kit.app.get_app().next_update_async()
                         continue
 
                 # Materials/
                 if inplace_mode:
-                    self._info("  Materials: in-place mode — skip copy (already alongside max).")
+                    self._info("  Materials: in-place mode - skip copy (already alongside max).")
                 else:
                     _mat_ok = _copy_materials_any_scheme(src_core_dir, out_core_dir, overwrite, self._styled)
                     if not _mat_ok:
                         self._warn("Materials not copied or not found. If max references './Materials/...', textures may miss.")
 
-                # Build trio: asset > main > id
+                # Build trio: asset -> main -> id
                 try:
-                    self._info(f"  [1/3] asset > {asset_path}")
+                    self._info(f"  [1/3] asset -> {asset_path}")
                     # Pass the material path override here
                     a_path = _build_asset(asset_path, max_dst, mat_path_override)
                     self._info(f"      asset done: {a_path}")
                 except Exception as e_asset:
                     self._error(f"      asset failed: {e_asset}")
-                    self._warn("      Skip main and id.")
                     self._progress(i, n)
+                    await omni.kit.app.get_app().next_update_async()
                     continue
 
                 try:
-                    self._info(f"  [2/3] main  > {main_path}")
+                    self._info(f"  [2/3] main  -> {main_path}")
                     m_path = _build_main(main_path, a_path, core)
                     self._info(f"      main done: {m_path}")
                 except Exception as e_main:
                     self._error(f"      main failed: {e_main}")
-                    self._warn("      Skip id.")
                     self._progress(i, n)
+                    await omni.kit.app.get_app().next_update_async()
                     continue
 
                 try:
-                    self._info(f"  [3/3] id    > {id_path}")
+                    self._info(f"  [3/3] id    -> {id_path}")
                     i_path = _build_id(id_path, m_path, core)
                     self._info(f"      id done: {i_path}")
                 except Exception as e_id:
                     self._error(f"      id failed: {e_id}")
                     self._progress(i, n)
+                    await omni.kit.app.get_app().next_update_async()
                     continue
 
                 done += 1
             except Exception as e:
-                self._error(f"Failed: {src} > {e}")
+                self._error(f"Failed: {src} -> {e}")
                 traceback.print_exc()
             finally:
                 self._progress(i, n)
+                # Yield control to let UI redraw!
+                await omni.kit.app.get_app().next_update_async()
 
         self._info(f"Done {done}/{n}; Skipped: {skipped} (exists & overwrite=off)")
